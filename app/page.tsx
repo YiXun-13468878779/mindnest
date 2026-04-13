@@ -4,9 +4,12 @@ import Link from 'next/link'
 import AppLayout from '@/components/layout/AppLayout'
 import { useMindNestStore, MOCK_ACTIVITIES } from '@/lib/store'
 import { formatDate, truncate } from '@/lib/utils'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import toast from 'react-hot-toast'
 import {
   FileText, TrendingUp, BookMarked, Sparkles, Plus, Upload, FlaskConical,
-  Network, Link2, Clock, Star, Zap, ArrowRight, Brain,
+  Network, Link2, Clock, Star, Zap, ArrowRight, Brain, Loader2, X,
 } from 'lucide-react'
 
 // ─── TopBar ──────────────────────────────────────────────────
@@ -234,83 +237,278 @@ export default function DashboardPage() {
   )
 }
 
+// ─── 平台徽章 ────────────────────────────────────────────────
+function PlatformBadge({ platform }: { platform: string }) {
+  const map: Record<string, { label: string; color: string }> = {
+    bilibili:     { label: 'B站视频',  color: 'bg-pink-50 text-pink-600 border-pink-100' },
+    xiaohongshu:  { label: '小红书',   color: 'bg-red-50 text-red-600 border-red-100' },
+    arxiv:        { label: '学术论文', color: 'bg-purple-50 text-purple-600 border-purple-100' },
+    youtube:      { label: 'YouTube',  color: 'bg-red-50 text-red-600 border-red-100' },
+    wechat:       { label: '微信公众号', color: 'bg-green-50 text-green-600 border-green-100' },
+    zhihu:        { label: '知乎',     color: 'bg-blue-50 text-blue-600 border-blue-100' },
+    juejin:       { label: '掘金',     color: 'bg-yellow-50 text-yellow-600 border-yellow-100' },
+    general:      { label: '网页',     color: 'bg-gray-50 text-gray-600 border-gray-100' },
+  }
+  const cfg = map[platform] || map.general
+  return <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${cfg.color}`}>{cfg.label}</span>
+}
+
+// ─── 视频嵌入 ────────────────────────────────────────────────
+function VideoEmbed({ platform, videoId, url }: { platform: string; videoId?: string; url: string }) {
+  if (platform === 'bilibili' && videoId) {
+    return (
+      <div className="relative w-full rounded-xl overflow-hidden bg-black" style={{ paddingBottom: '56.25%' }}>
+        <iframe
+          className="absolute inset-0 w-full h-full"
+          src={`//player.bilibili.com/player.html?bvid=${videoId}&autoplay=0&high_quality=1`}
+          scrolling="no" frameBorder="0" allowFullScreen
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        />
+      </div>
+    )
+  }
+  if (platform === 'youtube' && videoId) {
+    return (
+      <div className="relative w-full rounded-xl overflow-hidden bg-black" style={{ paddingBottom: '56.25%' }}>
+        <iframe
+          className="absolute inset-0 w-full h-full"
+          src={`https://www.youtube.com/embed/${videoId}`}
+          frameBorder="0" allowFullScreen
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        />
+      </div>
+    )
+  }
+  return null
+}
+
 // ─── 智能链接捕捉面板 ────────────────────────────────────────
 function LinkCapture() {
-  const { addDocument } = useMindNestStore()
+  const { addDocument, folders } = useMindNestStore()
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
-  const [captured, setCaptured] = useState<{ title: string; summary: string; url: string } | null>(null)
+  const [step, setStep] = useState<'idle' | 'fetching' | 'analyzing' | 'done'>('idle')
+  const [result, setResult] = useState<Record<string, any> | null>(null)
+  const [activeTab, setActiveTab] = useState<'summary' | 'ai' | 'raw'>('ai')
+
+  const STEP_LABELS = {
+    idle: '', fetching: '正在抓取页面内容...', analyzing: 'AI 分析整理中...', done: '分析完成',
+  }
+
+  const doSave = (data: Record<string, any>, rawUrl: string) => {
+    const docId = Math.random().toString(36).slice(2, 10)
+    addDocument({
+      id: docId,
+      title: data.title || '链接内容',
+      content: `# ${data.title || '链接内容'}\n\n## AI 整理结果\n\n${data.ai_analysis || data.summary || ''}\n\n---\n\n## 原始内容\n\n${data.raw_text || ''}`,
+      summary: data.summary || '',
+      keywords: data.keywords || [],
+      tags: [...(data.tags || []), '链接捕捉'],
+      category: data.category || '未分类',
+      source_type: 'link',
+      source_url: data.captured_url || rawUrl,
+      captured_url: data.captured_url || rawUrl,
+      platform: data.platform,
+      video_id: data.videoId,
+      raw_text: data.raw_text,
+      ai_analysis: data.ai_analysis,
+      folder_id: undefined,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      word_count: (data.ai_analysis || '').length,
+      view_count: 0,
+    })
+    return docId
+  }
 
   const capture = async () => {
     if (!url.trim()) return
     setLoading(true)
-    // 模拟抓取
-    await new Promise(r => setTimeout(r, 1500))
-    const result = {
-      title: '从链接捕捉的知识内容',
-      summary: 'AI 已自动提取该页面的核心内容并生成摘要，内容涵盖主要观点、关键信息和上下文关联。',
-      url: url.trim(),
+    setResult(null)
+    setStep('fetching')
+    try {
+      await new Promise(r => setTimeout(r, 400))
+      setStep('analyzing')
+      const res = await fetch('/api/capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url.trim() }),
+      })
+      if (!res.ok) throw new Error('服务器错误 ' + res.status)
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+
+      // 自动保存到知识库
+      doSave(data, url.trim())
+
+      setResult(data)
+      setStep('done')
+      toast.success(`✓ 已捕捉并保存：${(data.title || '页面内容').slice(0, 20)}`)
+    } catch (e: any) {
+      toast.error(e.message || '捕捉失败，请检查链接或确认服务器运行中')
+      setStep('idle')
+    } finally {
+      setLoading(false)
     }
-    setCaptured(result)
-    setLoading(false)
   }
 
   const save = () => {
-    if (!captured) return
-    addDocument({
-      id: Math.random().toString(36).slice(2),
-      title: captured.title,
-      content: `# ${captured.title}\n\n来源：${captured.url}\n\n${captured.summary}`,
-      summary: captured.summary,
-      tags: ['链接捕捉'],
-      keywords: [],
-      source_type: 'link',
-      source_url: captured.url,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      word_count: 200,
-      view_count: 0,
-    })
-    setCaptured(null)
+    // 已在 capture 时自动保存，此函数保留用于再次保存（去重由 id 保证）
+    toast.success('已保存到知识库')
+    setResult(null)
     setUrl('')
+    setStep('idle')
   }
 
+  const EXAMPLES = [
+    { label: 'B站视频', url: 'https://www.bilibili.com/video/BV1GJ411x7h7' },
+    { label: '知乎文章', url: 'https://www.zhihu.com/question/12345' },
+    { label: 'arXiv论文', url: 'https://arxiv.org/abs/2303.08774' },
+  ]
+
   return (
-    <div className="max-w-2xl">
-      <div className="bg-white rounded-xl border border-gray-100 p-6 mb-4">
-        <h2 className="font-semibold text-gray-800 mb-1">粘贴链接，AI 自动捕捉</h2>
-        <p className="text-sm text-gray-400 mb-4">支持普通网页、小红书、论文、B站视频等，AI 会根据内容类型差异化处理</p>
-        <div className="flex gap-3">
+    <div className="max-w-3xl">
+      {/* 输入框 */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-6 mb-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-1">
+          <Link2 className="w-4 h-4 text-pink-500" />
+          <h2 className="font-semibold text-gray-800">智能链接捕捉</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-4">
+          支持 B站、小红书、YouTube、知乎、arXiv 等平台，AI 自动识别内容类型并差异化整理
+        </p>
+        <div className="flex gap-3 mb-3">
           <input
             value={url} onChange={e => setUrl(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && capture()}
             placeholder="粘贴任意链接 https://..."
-            className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-400"
+            className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-pink-400 bg-gray-50 focus:bg-white transition-all"
           />
           <button
             onClick={capture} disabled={!url.trim() || loading}
-            className="px-5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className="px-6 bg-pink-500 text-white rounded-xl text-sm font-semibold hover:bg-pink-600 disabled:opacity-50 transition-colors flex items-center gap-2 min-w-[90px] justify-center"
           >
-            {loading ? '分析中...' : '捕捉'}
+            {loading ? (
+              <><Loader2 className="w-4 h-4 animate-spin" />{step === 'fetching' ? '抓取' : 'AI分析'}</>
+            ) : (
+              <><Sparkles className="w-4 h-4" />捕捉</>
+            )}
           </button>
         </div>
+
+        {/* 进度提示 */}
+        {loading && (
+          <div className="flex items-center gap-2 text-xs text-pink-600">
+            <div className="flex gap-1">
+              {['fetching','analyzing'].map((s, i) => (
+                <div key={s} className={`w-2 h-2 rounded-full transition-all ${
+                  step === s ? 'bg-pink-500 scale-125' : (step === 'done' || (step === 'analyzing' && s === 'fetching')) ? 'bg-pink-300' : 'bg-gray-200'
+                }`} />
+              ))}
+            </div>
+            {STEP_LABELS[step]}
+          </div>
+        )}
+
+        {/* 示例链接 */}
+        {!loading && !result && (
+          <div className="flex items-center gap-2 mt-3">
+            <span className="text-xs text-gray-400">示例：</span>
+            {EXAMPLES.map(e => (
+              <button key={e.label} onClick={() => setUrl(e.url)}
+                className="text-xs bg-gray-50 hover:bg-pink-50 hover:text-pink-600 text-gray-400 border border-gray-100 rounded-lg px-2.5 py-1 transition-colors">
+                {e.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {captured && (
-        <div className="bg-white rounded-xl border border-blue-200 p-5 bubble-float">
-          <div className="flex items-start gap-3 mb-4">
-            <div className="w-2 h-2 rounded-full bg-green-500 mt-2 flex-shrink-0 animate-pulse" />
-            <div>
-              <p className="font-semibold text-gray-800">{captured.title}</p>
-              <p className="text-xs text-blue-500 truncate">{captured.url}</p>
+      {/* 结果展示 */}
+      {result && (
+        <div className="bg-white rounded-2xl border border-pink-100 shadow-sm bubble-float overflow-hidden">
+          {/* 标题栏 */}
+          <div className="flex items-start justify-between p-5 border-b border-gray-100">
+            <div className="flex-1 min-w-0 pr-4">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
+                <PlatformBadge platform={result.platform || 'general'} />
+                {result.category && (
+                  <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-100">{result.category}</span>
+                )}
+              </div>
+              <h3 className="text-base font-bold text-gray-900 mb-1">{result.title}</h3>
+              <a href={result.captured_url || url} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-pink-500 hover:underline truncate block max-w-lg">
+                {result.captured_url || url}
+              </a>
             </div>
-          </div>
-          <p className="text-sm text-gray-600 mb-4 leading-relaxed">{captured.summary}</p>
-          <div className="flex gap-3">
-            <button onClick={save} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-              加入知识库
+            <button onClick={() => { setResult(null); setStep('idle') }} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+              <X className="w-4 h-4" />
             </button>
-            <button onClick={() => setCaptured(null)} className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors">
-              取消
+          </div>
+
+          {/* 视频嵌入 */}
+          {(result.platform === 'bilibili' || result.platform === 'youtube') && result.videoId && (
+            <div className="px-5 pt-4">
+              <VideoEmbed platform={result.platform} videoId={result.videoId} url={url} />
+            </div>
+          )}
+
+          {/* 内容标签页 */}
+          <div className="flex border-b border-gray-100 px-5 mt-4">
+            {[
+              { key: 'ai', label: 'AI 整理结果' },
+              { key: 'summary', label: '摘要' },
+              { key: 'raw', label: '原始内容' },
+            ].map(({ key, label }) => (
+              <button key={key} onClick={() => setActiveTab(key as typeof activeTab)}
+                className={`pb-2 mr-5 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === key ? 'border-pink-500 text-pink-600' : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-5 max-h-80 overflow-y-auto">
+            {activeTab === 'ai' && (
+              <div className="prose-mindnest text-sm">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.ai_analysis || result.summary || '暂无 AI 分析结果'}</ReactMarkdown>
+              </div>
+            )}
+            {activeTab === 'summary' && (
+              <p className="text-sm text-gray-700 leading-relaxed">{result.summary || '暂无摘要'}</p>
+            )}
+            {activeTab === 'raw' && (
+              <p className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap font-mono">
+                {result.raw_text || '未能抓取原始内容'}
+              </p>
+            )}
+          </div>
+
+          {/* 关键词 */}
+          {result.keywords?.length > 0 && (
+            <div className="px-5 pb-3 flex flex-wrap gap-1.5">
+              {result.keywords.map((k: string) => (
+                <span key={k} className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">{k}</span>
+              ))}
+            </div>
+          )}
+
+          {/* 操作栏 */}
+          <div className="flex items-center gap-3 px-5 py-4 bg-gray-50 border-t border-gray-100">
+            <div className="flex items-center gap-1.5 flex-1 text-xs text-green-600 font-medium">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              已自动保存到知识库 · 分类：{result.folder_suggestion || result.category || '链接捕捉'}
+            </div>
+            <Link href="/knowledge"
+              className="flex items-center gap-2 px-5 py-2 bg-pink-500 text-white rounded-xl text-sm font-semibold hover:bg-pink-600 transition-colors">
+              <ArrowRight className="w-4 h-4" />查看知识库
+            </Link>
+            <button onClick={() => { setResult(null); setUrl(''); setStep('idle') }}
+              className="px-4 py-2 border border-gray-200 text-gray-600 rounded-xl text-sm hover:bg-white transition-colors">
+              继续捕捉
             </button>
           </div>
         </div>

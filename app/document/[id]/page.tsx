@@ -328,6 +328,147 @@ function AIPanel({ content, title, onClose }: { content: string; title: string; 
   )
 }
 
+// ─── 文件查看器 ──────────────────────────────────────────────
+function FileViewer({ doc }: { doc: import('@/lib/types').Document }) {
+  const [pdfTab, setPdfTab] = useState<'preview' | 'content'>('preview')
+  const isPdf = doc.file_type === 'application/pdf' || doc.file_name?.endsWith('.pdf')
+  const isImage = doc.file_type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp)$/i.test(doc.file_name || '')
+  const isText = doc.file_type?.startsWith('text/') || /\.(md|txt|markdown)$/i.test(doc.file_name || '')
+
+  if (isPdf) {
+    return (
+      <div>
+        <div className="flex gap-3 mb-4">
+          <button onClick={() => setPdfTab('preview')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${pdfTab === 'preview' ? 'bg-blue-600 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            PDF 预览
+          </button>
+          <button onClick={() => setPdfTab('content')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${pdfTab === 'content' ? 'bg-blue-600 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            提取内容
+          </button>
+        </div>
+        {pdfTab === 'preview' ? (
+          doc.file_data ? (
+            <iframe src={doc.file_data} className="w-full rounded-xl border border-gray-100 shadow-sm" style={{ height: '70vh' }} />
+          ) : (
+            <div className="text-center py-20 text-gray-400">
+              <FileText className="w-12 h-12 mx-auto mb-3 text-gray-200" />
+              <p className="text-sm">PDF 预览不可用（文件数据未保存）</p>
+            </div>
+          )
+        ) : (
+          <div className="prose-mindnest">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.content}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (isImage) {
+    return doc.file_data ? (
+      <div className="flex justify-center">
+        <img src={doc.file_data} alt={doc.title} className="max-w-full rounded-xl border border-gray-100 shadow-sm" />
+      </div>
+    ) : (
+      <div className="text-center py-20 text-gray-400 text-sm">图片预览不可用</div>
+    )
+  }
+
+  if (isText) {
+    return (
+      <div className="prose-mindnest">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.content}</ReactMarkdown>
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-center py-20 text-gray-400">
+      <FileText className="w-12 h-12 mx-auto mb-3 text-gray-200" />
+      <p className="text-sm">该文件格式暂不支持预览</p>
+      <p className="text-xs mt-1">{doc.file_name}</p>
+    </div>
+  )
+}
+
+// ─── 链接文档查看器 ──────────────────────────────────────────
+function LinkDocViewer({ doc }: { doc: import('@/lib/types').Document }) {
+  const [tab, setTab] = useState<'ai' | 'raw' | 'content'>('ai')
+
+  const isVideo = doc.platform === 'bilibili' || doc.platform === 'youtube'
+
+  return (
+    <div>
+      {/* 来源信息 */}
+      <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-xl">
+        <Link2 className="w-4 h-4 text-blue-500 flex-shrink-0" />
+        <a href={doc.captured_url || doc.source_url} target="_blank" rel="noopener noreferrer"
+          className="text-sm text-blue-600 hover:underline truncate flex-1">
+          {doc.captured_url || doc.source_url}
+        </a>
+        {doc.platform && (
+          <span className="text-xs px-2 py-0.5 bg-pink-50 text-pink-600 rounded-full border border-pink-100 flex-shrink-0 capitalize">
+            {doc.platform}
+          </span>
+        )}
+      </div>
+
+      {/* 视频嵌入 */}
+      {isVideo && doc.video_id && (
+        <div className="mb-5">
+          {doc.platform === 'bilibili' ? (
+            <div className="relative w-full rounded-xl overflow-hidden bg-black" style={{ paddingBottom: '56.25%' }}>
+              <iframe className="absolute inset-0 w-full h-full"
+                src={`//player.bilibili.com/player.html?bvid=${doc.video_id}&autoplay=0`}
+                scrolling="no" frameBorder="0" allowFullScreen />
+            </div>
+          ) : (
+            <div className="relative w-full rounded-xl overflow-hidden bg-black" style={{ paddingBottom: '56.25%' }}>
+              <iframe className="absolute inset-0 w-full h-full"
+                src={`https://www.youtube.com/embed/${doc.video_id}`}
+                frameBorder="0" allowFullScreen />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 内容标签页 */}
+      <div className="flex gap-4 border-b border-gray-100 mb-4">
+        {[
+          { key: 'ai', label: 'AI 整理结果' },
+          { key: 'content', label: '文档内容' },
+          { key: 'raw', label: '原始文本' },
+        ].map(({ key, label }) => (
+          <button key={key} onClick={() => setTab(key as typeof tab)}
+            className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+              tab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'ai' && (
+        <div className="prose-mindnest">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.ai_analysis || doc.summary || '暂无 AI 分析结果'}</ReactMarkdown>
+        </div>
+      )}
+      {tab === 'content' && (
+        <div className="prose-mindnest">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.content}</ReactMarkdown>
+        </div>
+      )}
+      {tab === 'raw' && (
+        <pre className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap font-mono bg-gray-50 rounded-xl p-4">
+          {doc.raw_text || '无原始文本'}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 // ─── 文档编辑器页面 ──────────────────────────────────────────
 export default function DocumentPage() {
   const params = useParams()
@@ -457,10 +598,10 @@ export default function DocumentPage() {
               <hr className="border-gray-100 mb-6" />
 
               {/* 文件预览 或 块编辑器 */}
-              {isFile && existing?.file_type?.includes('pdf') ? (
-                <div>
-                  <iframe src={existing.file_url} className="w-full h-[600px] rounded-xl border border-gray-100" />
-                </div>
+              {existing?.source_type === 'file' ? (
+                <FileViewer doc={existing} />
+              ) : existing?.source_type === 'link' ? (
+                <LinkDocViewer doc={existing} />
               ) : mode === 'edit' ? (
                 <BlockEditor blocks={blocks} onChange={setBlocks} />
               ) : (

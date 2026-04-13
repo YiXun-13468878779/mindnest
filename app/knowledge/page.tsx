@@ -22,7 +22,11 @@ function FolderItem({ folder, level = 0 }: { folder: typeof MOCK_FOLDERS[0]; lev
   return (
     <div>
       <button
-        onClick={() => { setOpen(p => !p); setSelectedFolderId(folder.id) }}
+        onClick={() => {
+          if (folder.children?.length) setOpen(p => !p)
+          // 再次点击已选文件夹则取消选中（显示全部）
+          setSelectedFolderId(selected ? null : folder.id)
+        }}
         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${
           selected ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'
         }`}
@@ -43,31 +47,112 @@ function FolderItem({ folder, level = 0 }: { folder: typeof MOCK_FOLDERS[0]; lev
 }
 
 // ─── 上传 Modal ───────────────────────────────────────────────
+// 读取文件内容为文本或 data URL
+async function readFileContent(file: File): Promise<{ text: string; dataUrl: string }> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    if (file.type === 'application/pdf' || file.type.startsWith('image/')) {
+      // PDF/图片读为 dataURL（可预览）
+      const textReader = new FileReader()
+      textReader.onload = () => {
+        const dataReader = new FileReader()
+        dataReader.onload = () => resolve({ text: '', dataUrl: dataReader.result as string })
+        dataReader.readAsDataURL(file)
+      }
+      textReader.readAsText(file)
+      // 直接走 dataURL
+      const dr = new FileReader()
+      dr.onload = () => resolve({ text: '', dataUrl: dr.result as string })
+      dr.readAsDataURL(file)
+    } else {
+      // 文本类文件直接读内容
+      reader.onload = (e) => resolve({ text: e.target?.result as string || '', dataUrl: '' })
+      reader.readAsText(file, 'utf-8')
+    }
+  })
+}
+
 function UploadModal({ onClose }: { onClose: () => void }) {
   const { addDocument } = useMindNestStore()
   const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState<Record<string, string>>({})
 
   const onDrop = useCallback(async (files: File[]) => {
     setUploading(true)
     for (const file of files) {
-      await new Promise(r => setTimeout(r, 800))
+      setProgress(p => ({ ...p, [file.name]: '读取中...' }))
+      const { text, dataUrl } = await readFileContent(file)
+      setProgress(p => ({ ...p, [file.name]: 'AI分析中...' }))
+
+      const ext = file.name.split('.').pop()?.toLowerCase() || ''
+      const isPdf = file.type === 'application/pdf'
+      const isImage = file.type.startsWith('image/')
+      const isText = ['md', 'txt', 'markdown'].includes(ext) || file.type.startsWith('text/')
+
+      // 构建可预览内容
+      let content = ''
+      if (isText && text) {
+        content = text
+      } else if (isPdf) {
+        content = `# ${file.name.replace(/\.[^.]+$/, '')}\n\n> PDF 文件已上传，点击下方预览按钮查看原文\n\n文件大小：${(file.size / 1024).toFixed(0)} KB`
+      } else if (isImage) {
+        content = `# ${file.name.replace(/\.[^.]+$/, '')}\n\n> 图片文件已上传\n\n文件大小：${(file.size / 1024).toFixed(0)} KB`
+      } else {
+        content = `# ${file.name.replace(/\.[^.]+$/, '')}\n\n文件类型：${file.type || ext}\n文件大小：${(file.size / 1024).toFixed(0)} KB\n\n> 该文件格式暂不支持直接预览内容，可下载查看。`
+      }
+
+      // 尝试 AI 分析
+      let summary = `从文件 ${file.name} 导入`
+      let keywords: string[] = []
+      let tags = ['文件导入']
+      let category = '文件'
+      try {
+        const res = await fetch('/api/documents', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: (text || file.name).slice(0, 2000), title: file.name }),
+        })
+        const data = await res.json()
+        if (data.summary) summary = data.summary
+        if (data.keywords) keywords = data.keywords
+        if (data.tags) tags = [...data.tags, '文件导入']
+        if (data.category) category = data.category
+      } catch { /* AI 分析失败不阻断上传 */ }
+
       const doc = {
-        id: generateId(), title: file.name.replace(/\.[^.]+$/, ''),
-        content: `# ${file.name}\n\n文件已成功上传并处理。\n\n> AI 正在提取内容，请稍候...`,
-        summary: `从文件 ${file.name} 提取的内容`, keywords: [], tags: ['文件导入'],
-        source_type: 'file' as const, file_type: file.type,
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-        word_count: 0, view_count: 0,
+        id: generateId(),
+        title: file.name.replace(/\.[^.]+$/, ''),
+        content,
+        summary,
+        keywords,
+        tags,
+        category,
+        source_type: 'file' as const,
+        file_type: file.type,
+        file_name: file.name,
+        file_data: dataUrl || undefined,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        word_count: text.length || 0,
+        view_count: 0,
       }
       addDocument(doc)
+      setProgress(p => ({ ...p, [file.name]: '✓ 已加入知识库' }))
       toast.success(`${file.name} 已加入知识库`)
     }
     setUploading(false)
-    onClose()
+    setTimeout(onClose, 800)
   }, [addDocument, onClose])
 
   const { getRootProps, getInputProps, isDragActive, acceptedFiles } = useDropzone({
-    onDrop, accept: { 'application/pdf': [], 'application/msword': [], 'text/markdown': [], 'text/plain': [], 'image/*': [] },
+    onDrop,
+    accept: {
+      'application/pdf': ['.pdf'],
+      'application/msword': ['.doc'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'text/markdown': ['.md', '.markdown'],
+      'text/plain': ['.txt'],
+      'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.webp'],
+    },
   })
 
   return (
@@ -104,7 +189,12 @@ function UploadModal({ onClose }: { onClose: () => void }) {
                 <div key={f.name} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg text-sm">
                   <FileText className="w-4 h-4 text-blue-500" />
                   <span className="flex-1 truncate text-gray-700">{f.name}</span>
-                  <span className="text-gray-400">{(f.size / 1024).toFixed(0)}KB</span>
+                  <span className="text-gray-400 mr-2">{(f.size / 1024).toFixed(0)}KB</span>
+                  {progress[f.name] && (
+                    <span className={`text-xs ${progress[f.name].startsWith('✓') ? 'text-green-500' : 'text-blue-500'}`}>
+                      {progress[f.name]}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -113,7 +203,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           {uploading && (
             <div className="mt-4 flex items-center gap-3 text-sm text-blue-600">
               <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              正在处理文件...
+              正在处理文件并进行 AI 分析...
             </div>
           )}
         </div>
@@ -123,7 +213,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
 }
 
 // ─── 文档卡片 ─────────────────────────────────────────────────
-function DocumentCard({ doc, view }: { doc: ReturnType<typeof useMindNestStore>['documents'][0]; view: 'list' | 'grid' }) {
+function DocumentCard({ doc, view }: { doc: import('@/lib/types').Document; view: 'list' | 'grid' }) {
   const { deleteDocument } = useMindNestStore()
   const [menu, setMenu] = useState(false)
 
@@ -212,18 +302,35 @@ function DocumentCard({ doc, view }: { doc: ReturnType<typeof useMindNestStore>[
 // ─── 知识库页面 ───────────────────────────────────────────────
 export default function KnowledgePage() {
   const router = useRouter()
-  const { documents, folders, selectedFolderId } = useMindNestStore()
+  const { documents, folders, selectedFolderId, setSelectedFolderId } = useMindNestStore()
   const [view, setView] = useState<'list' | 'grid'>('list')
   const [search, setSearch] = useState('')
   const [showUpload, setShowUpload] = useState(false)
-  const [showAutoOrg, setShowAutoOrg] = useState(true)
   const [autoByType, setAutoByType] = useState(true)
   const [autoByDate, setAutoByDate] = useState(false)
+  // 多维筛选状态
+  const [filterSource, setFilterSource] = useState<string>('all')
+  const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [filterDateRange, setFilterDateRange] = useState<string>('all')
+  const [showFilter, setShowFilter] = useState(false)
 
-  const filtered = documents.filter(d =>
-    (!search || d.title.toLowerCase().includes(search.toLowerCase()) || d.tags.some(t => t.includes(search))) &&
-    (!selectedFolderId || d.folder_id === selectedFolderId)
-  )
+  // 收集所有分类
+  const allCategories = Array.from(new Set(documents.map(d => d.category).filter(Boolean))) as string[]
+  const allTags = Array.from(new Set(documents.flatMap(d => d.tags))).slice(0, 20)
+
+  const filtered = documents.filter(d => {
+    if (search && !d.title.toLowerCase().includes(search.toLowerCase()) && !d.tags.some(t => t.includes(search)) && !d.summary?.includes(search)) return false
+    if (selectedFolderId === '__unclassified__' && d.folder_id) return false
+    else if (selectedFolderId && selectedFolderId !== '__unclassified__' && d.folder_id !== selectedFolderId) return false
+    if (filterSource !== 'all' && d.source_type !== filterSource) return false
+    if (filterCategory !== 'all' && d.category !== filterCategory) return false
+    if (filterDateRange !== 'all') {
+      const days = { '7d': 7, '30d': 30, '90d': 90 }[filterDateRange] || 0
+      const cutoff = Date.now() - days * 86400000
+      if (new Date(d.created_at).getTime() < cutoff) return false
+    }
+    return true
+  })
 
   return (
     <AppLayout>
@@ -254,6 +361,30 @@ export default function KnowledgePage() {
               <input placeholder="搜索知识库..." className="w-full text-xs pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-300" />
             </div>
             <div className="space-y-0.5">
+              {/* 全部文档 */}
+              <button
+                onClick={() => setSelectedFolderId(null)}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                  !selectedFolderId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <span className="w-3" />
+                <FileText className="w-4 h-4 text-blue-400" />
+                <span className="flex-1 text-left">全部文档</span>
+                <span className="text-xs text-gray-400">{documents.length}</span>
+              </button>
+              {/* 未归类 */}
+              <button
+                onClick={() => setSelectedFolderId('__unclassified__')}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                  selectedFolderId === '__unclassified__' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <span className="w-3" />
+                <Link2 className="w-4 h-4 text-pink-400" />
+                <span className="flex-1 text-left">未归类</span>
+                <span className="text-xs text-gray-400">{documents.filter(d => !d.folder_id).length}</span>
+              </button>
               {folders.map(f => <FolderItem key={f.id} folder={f} />)}
             </div>
           </div>
@@ -308,19 +439,80 @@ export default function KnowledgePage() {
             </div>
           </div>
 
-          {/* 搜索栏 */}
-          <div className="flex items-center gap-3 mb-5">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="搜索文档标题、内容、标签..."
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-blue-300 bg-white"
-              />
+          {/* 搜索 + 筛选栏 */}
+          <div className="space-y-3 mb-5">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="搜索文档标题、内容、标签..."
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-blue-300 bg-white"
+                />
+              </div>
+              <button onClick={() => setShowFilter(p => !p)}
+                className={`flex items-center gap-2 px-4 py-2.5 border rounded-xl text-sm transition-colors ${showFilter ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                <Filter className="w-4 h-4" />筛选
+                {(filterSource !== 'all' || filterCategory !== 'all' || filterDateRange !== 'all') && (
+                  <span className="w-2 h-2 bg-orange-400 rounded-full" />
+                )}
+              </button>
             </div>
-            <button className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
-              <Filter className="w-4 h-4" />筛选
-            </button>
+
+            {/* 快速筛选标签行 */}
+            <div className="flex flex-wrap gap-2 items-center">
+              {/* 来源筛选 */}
+              {[
+                { key: 'all', label: '全部' },
+                { key: 'manual', label: '📝 手动创建' },
+                { key: 'link', label: '🔗 链接捕捉' },
+                { key: 'file', label: '📁 文件导入' },
+                { key: 'research', label: '🔬 AI研究' },
+              ].map(({ key, label }) => (
+                <button key={key} onClick={() => setFilterSource(key)}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                    filterSource === key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+
+              {allCategories.length > 0 && (
+                <>
+                  <span className="text-gray-200 text-xs">|</span>
+                  {allCategories.slice(0, 5).map(cat => (
+                    <button key={cat} onClick={() => setFilterCategory(filterCategory === cat ? 'all' : cat)}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                        filterCategory === cat ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'
+                      }`}>
+                      {cat}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {/* 时间筛选 */}
+              <span className="text-gray-200 text-xs">|</span>
+              {[
+                { key: 'all', label: '所有时间' },
+                { key: '7d', label: '近7天' },
+                { key: '30d', label: '近30天' },
+                { key: '90d', label: '近3个月' },
+              ].map(({ key, label }) => (
+                <button key={key} onClick={() => setFilterDateRange(key)}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                    filterDateRange === key ? 'bg-emerald-600 text-white border-emerald-600' : 'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+
+              {(filterSource !== 'all' || filterCategory !== 'all' || filterDateRange !== 'all') && (
+                <button onClick={() => { setFilterSource('all'); setFilterCategory('all'); setFilterDateRange('all') }}
+                  className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                  <X className="w-3 h-3" />清除筛选
+                </button>
+              )}
+            </div>
           </div>
 
           {/* 文档列表 */}

@@ -13,9 +13,18 @@ export interface Document {
   tags: string[]
   source_type: SourceType
   source_url?: string
-  file_url?: string
-  file_type?: string
+  file_url?: string        // 文件原始 URL 或 blob URL
+  file_data?: string       // base64 数据（PDF/图片本地预览用）
+  file_type?: string       // MIME type
+  file_name?: string       // 原始文件名
   folder_id?: string
+  category?: string        // AI 自动分类领域
+  // 链接捕捉专属
+  captured_url?: string    // 原始链接
+  platform?: string        // 'bilibili' | 'xiaohongshu' | 'arxiv' | 'general'
+  video_id?: string        // 视频平台 ID（用于嵌入播放）
+  raw_text?: string        // 抓取的原始文本
+  ai_analysis?: string     // AI 整理结果
   created_at: string
   updated_at: string
   word_count?: number

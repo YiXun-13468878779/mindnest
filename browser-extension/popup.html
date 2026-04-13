@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindNest 智能捕捉</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 360px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #fff;
+      color: #1e293b;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      background: linear-gradient(135deg, #eff6ff, #f0fdf4);
+    }
+    .logo {
+      width: 32px; height: 32px;
+      background: #2563eb;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+    }
+    .header-text h1 { font-size: 14px; font-weight: 700; color: #1e293b; }
+    .header-text p  { font-size: 11px; color: #94a3b8; }
+
+    .url-bar {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .url-label { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+    .url-text {
+      font-size: 12px; color: #475569;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      background: #f8fafc; border-radius: 6px;
+      padding: 6px 10px;
+    }
+
+    .platform-badge {
+      display: inline-block;
+      font-size: 10px; font-weight: 600;
+      padding: 2px 8px; border-radius: 100px;
+      margin-top: 6px;
+    }
+
+    .actions { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+
+    .btn {
+      width: 100%; padding: 10px 16px;
+      border-radius: 10px; font-size: 13px; font-weight: 600;
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: #ec4899; color: white; }
+    .btn-primary:hover { background: #db2777; }
+    .btn-primary:disabled { opacity: 0.5; cursor: default; }
+    .btn-secondary { background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; }
+    .btn-secondary:hover { background: #f1f5f9; }
+
+    .status {
+      margin: 0 16px 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      display: none;
+    }
+    .status.loading { background: #eff6ff; color: #2563eb; display: flex; align-items: center; gap: 8px; }
+    .status.success { background: #f0fdf4; color: #16a34a; display: flex; align-items: center; gap: 8px; }
+    .status.error   { background: #fef2f2; color: #dc2626; display: block; }
+
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid #bfdbfe;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .shortcut-hint {
+      padding: 8px 16px 12px;
+      font-size: 11px; color: #94a3b8;
+      text-align: center;
+    }
+    kbd {
+      background: #f1f5f9; border: 1px solid #e2e8f0;
+      border-radius: 4px; padding: 1px 5px; font-size: 10px;
+    }
+
+    .settings { padding: 10px 16px; border-top: 1px solid #f1f5f9; }
+    .settings label { font-size: 11px; color: #94a3b8; display: block; margin-bottom: 4px; }
+    .settings input {
+      width: 100%; font-size: 12px;
+      border: 1px solid #e2e8f0; border-radius: 8px;
+      padding: 7px 10px; outline: none;
+      color: #475569;
+    }
+    .settings input:focus { border-color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <!-- 头部 -->
+  <div class="header">
+    <div class="logo">🧠</div>
+    <div class="header-text">
+      <h1>MindNest 智能捕捉</h1>
+      <p>将当前页面保存到知识库</p>
+    </div>
+  </div>
+
+  <!-- 当前 URL -->
+  <div class="url-bar">
+    <div class="url-label">当前页面</div>
+    <div class="url-text" id="currentUrl">加载中...</div>
+    <div id="platformBadge"></div>
+  </div>
+
+  <!-- 状态提示 -->
+  <div class="status" id="status"></div>
+
+  <!-- 操作按钮 -->
+  <div class="actions">
+    <button class="btn btn-primary" id="captureBtn">
+      ✨ 智能捕捉并分析
+    </button>
+    <button class="btn btn-secondary" id="openAppBtn">
+      🔗 打开 MindNest
+    </button>
+  </div>
+
+  <!-- 快捷键提示 -->
+  <div class="shortcut-hint">
+    快捷键 <kbd>Alt</kbd> + <kbd>S</kbd> 随时触发捕捉
+  </div>
+
+  <!-- 服务器地址设置 -->
+  <div class="settings">
+    <label>MindNest 服务器地址</label>
+    <input type="text" id="serverUrl" placeholder="http://localhost:3000" />
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

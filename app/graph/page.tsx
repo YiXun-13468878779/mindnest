@@ -1,11 +1,12 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
+import Link from 'next/link'
 import AppLayout from '@/components/layout/AppLayout'
 import { useMindNestStore } from '@/lib/store'
 import {
-  Search, Filter, Maximize2, Download, Network, RefreshCw,
-  TreePine, X, ChevronUp, ChevronDown,
+  Search, Filter, Maximize2, Network, RefreshCw,
+  TreePine, X, ChevronUp, ChevronRight, ChevronDown, FileText, ExternalLink,
 } from 'lucide-react'
 
 // ─── Mock 图谱数据 ───────────────────────────────────────────
@@ -37,8 +38,65 @@ const CATEGORY_COLORS: Record<string, string> = {
   '技术': '#4F46E5', '前端开发': '#2563EB', '设计': '#EC4899', '分析': '#10B981', '管理': '#F59E0B',
 }
 
+// ─── 节点详情面板 ─────────────────────────────────────────────
+function NodeDetail({ node, onClose }: { node: typeof NODES[0]; onClose: () => void }) {
+  const { documents } = useMindNestStore()
+  const related = documents.filter(d => d.tags.some(t => t.includes(node.name)) || d.title.includes(node.name))
+  const connected = EDGES
+    .filter(e => e.source === node.id || e.target === node.id)
+    .map(e => NODES.find(n => n.id === (e.source === node.id ? e.target : e.source)))
+    .filter(Boolean)
+
+  return (
+    <div className="bubble-float absolute right-4 top-16 z-20 bg-white rounded-2xl shadow-2xl border border-gray-100 w-72 overflow-hidden">
+      <div className="flex items-center gap-3 p-4 border-b border-gray-100" style={{ background: node.color + '11' }}>
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: node.color + '22', border: `2px solid ${node.color}` }}>
+          <span className="text-sm font-bold" style={{ color: node.color }}>{node.name.slice(0, 2)}</span>
+        </div>
+        <div className="flex-1">
+          <p className="font-semibold text-gray-900">{node.name}</p>
+          <p className="text-xs text-gray-400">{node.category} · {node.type}</p>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+      </div>
+      <div className="p-4 space-y-4">
+        {/* 连接节点 */}
+        <div>
+          <p className="text-xs font-semibold text-gray-500 mb-2">关联节点 ({connected.length})</p>
+          <div className="flex flex-wrap gap-1.5">
+            {connected.map(n => n && (
+              <span key={n.id} className="text-xs px-2 py-1 rounded-full border" style={{ borderColor: n.color + '44', color: n.color, background: n.color + '11' }}>
+                {n.name}
+              </span>
+            ))}
+            {connected.length === 0 && <p className="text-xs text-gray-400">暂无关联</p>}
+          </div>
+        </div>
+        {/* 相关文档 */}
+        <div>
+          <p className="text-xs font-semibold text-gray-500 mb-2">相关文档 ({related.length})</p>
+          {related.length > 0 ? (
+            <div className="space-y-1.5">
+              {related.slice(0, 3).map(doc => (
+                <Link key={doc.id} href={`/document/${doc.id}`}
+                  className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50 transition-colors group">
+                  <FileText className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                  <span className="text-xs text-gray-700 group-hover:text-blue-600 truncate flex-1">{doc.title}</span>
+                  <ExternalLink className="w-3 h-3 text-gray-300 flex-shrink-0" />
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">知识库中暂无相关文档</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── D3 力导向图 ──────────────────────────────────────────────
-function ForceGraph() {
+function ForceGraph({ onNodeClick }: { onNodeClick: (node: typeof NODES[0]) => void }) {
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
@@ -54,28 +112,29 @@ function ForceGraph() {
       .force('collision', d3.forceCollide().radius((d: any) => d.size / 2 + 20))
 
     const g = svg.append('g')
-
-    // Zoom
     svg.call(d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 3]).on('zoom', (e) => g.attr('transform', e.transform)) as any)
 
-    // Links
     const link = g.append('g').selectAll('line').data(EDGES).enter().append('line')
       .attr('stroke', '#e2e8f0').attr('stroke-width', (d) => d.weight * 2).attr('stroke-opacity', 0.8)
 
-    // Nodes
     const node = g.append('g').selectAll('g').data(NODES).enter().append('g')
-      .attr('class', 'graph-node').call(
+      .attr('class', 'graph-node')
+      .style('cursor', 'pointer')
+      .call(
         d3.drag<SVGGElement, any>()
           .on('start', (e, d: any) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y })
           .on('drag', (e, d: any) => { d.fx = e.x; d.fy = e.y })
           .on('end', (e, d: any) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null }) as any
       )
+      .on('click', (_e: any, d: any) => { onNodeClick(d) })
 
     node.append('circle')
       .attr('r', (d) => d.size / 2)
       .attr('fill', (d) => d.color + '33')
       .attr('stroke', (d) => d.color)
       .attr('stroke-width', 2)
+      .on('mouseover', function() { d3.select(this).attr('fill', (d: any) => d.color + '66').attr('stroke-width', 3) })
+      .on('mouseout', function() { d3.select(this).attr('fill', (d: any) => d.color + '33').attr('stroke-width', 2) })
 
     node.append('text')
       .text((d) => d.name)
@@ -91,9 +150,64 @@ function ForceGraph() {
           .attr('x2', (d: any) => d.target.x).attr('y2', (d: any) => d.target.y)
       node.attr('transform', (d: any) => `translate(${d.x},${d.y})`)
     })
-  }, [])
+  }, [onNodeClick])
 
   return <svg ref={svgRef} className="w-full h-full" />
+}
+
+// ─── 树状图视图 ───────────────────────────────────────────────
+function TreeView({ onNodeClick }: { onNodeClick: (node: typeof NODES[0]) => void }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(['技术', '前端开发', '设计']))
+
+  // 按分类分组
+  const groups: Record<string, typeof NODES> = {}
+  NODES.forEach(n => {
+    if (!groups[n.category]) groups[n.category] = []
+    groups[n.category].push(n)
+  })
+
+  const toggle = (cat: string) => setExpanded(s => {
+    const next = new Set(s)
+    next.has(cat) ? next.delete(cat) : next.add(cat)
+    return next
+  })
+
+  return (
+    <div className="w-full h-full overflow-y-auto p-6">
+      <div className="max-w-lg mx-auto space-y-2">
+        {Object.entries(groups).map(([cat, nodes]) => {
+          const color = CATEGORY_COLORS[cat] || '#64748b'
+          const open = expanded.has(cat)
+          return (
+            <div key={cat} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+              <button onClick={() => toggle(cat)}
+                className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 transition-colors">
+                {open ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+                <span className="font-medium text-gray-800 flex-1 text-left">{cat}</span>
+                <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{nodes.length}</span>
+              </button>
+              {open && (
+                <div className="border-t border-gray-100">
+                  {nodes.map(n => (
+                    <button key={n.id} onClick={() => onNodeClick(n)}
+                      className="w-full flex items-center gap-3 px-6 py-2.5 hover:bg-blue-50 transition-colors group">
+                      <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: n.color + '22' }}>
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: n.color }} />
+                      </div>
+                      <span className="text-sm text-gray-700 group-hover:text-blue-700 flex-1 text-left">{n.name}</span>
+                      <span className="text-xs text-gray-400 opacity-0 group-hover:opacity-100">{n.type}</span>
+                      <ExternalLink className="w-3.5 h-3.5 text-gray-300 opacity-0 group-hover:opacity-100" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 // ─── AI 分析面板 ──────────────────────────────────────────────
@@ -180,9 +294,14 @@ function AIAnalysisPanel() {
 // ─── 图谱页面 ─────────────────────────────────────────────────
 export default function GraphPage() {
   const [showFilter, setShowFilter] = useState(false)
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([])
+  const [graphMode, setGraphMode] = useState<'force' | 'tree'>('force')
+  const [selectedNode, setSelectedNode] = useState<typeof NODES[0] | null>(null)
   const NODE_TYPES = ['概念', '技术', '方法论', '技能', '人物', '事件']
   const CATEGORIES = Object.keys(CATEGORY_COLORS)
+
+  const handleNodeClick = (node: typeof NODES[0]) => {
+    setSelectedNode(prev => prev?.id === node.id ? null : node)
+  }
 
   return (
     <AppLayout>
@@ -190,9 +309,9 @@ export default function GraphPage() {
       <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
         <input placeholder="搜索知识库..."
           className="w-80 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm text-gray-600 placeholder-gray-400 focus:outline-none focus:border-blue-300 focus:bg-white transition-all" />
-        <button className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 px-3 py-2 border border-gray-200 rounded-xl">
-          <Network className="w-4 h-4" />新建文档
-        </button>
+        <Link href="/document/new" className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700">
+          新建文档
+        </Link>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -212,19 +331,28 @@ export default function GraphPage() {
 
           {/* 图谱控件 */}
           <div className="absolute top-4 right-80 z-10 flex items-center gap-2">
-            <button className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs text-gray-600 hover:bg-gray-50 shadow-sm">
-              <TreePine className="w-3.5 h-3.5" />树状视图
-            </button>
+            <div className="flex items-center bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+              <button onClick={() => setGraphMode('force')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs transition-colors ${graphMode === 'force' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <Network className="w-3.5 h-3.5" />力导向
+              </button>
+              <button onClick={() => setGraphMode('tree')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs transition-colors ${graphMode === 'tree' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <TreePine className="w-3.5 h-3.5" />树状图
+              </button>
+            </div>
             <button onClick={() => setShowFilter(p => !p)} className={`flex items-center gap-1.5 px-3 py-2 border rounded-xl text-xs shadow-sm transition-colors ${showFilter ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               <Filter className="w-3.5 h-3.5" />筛选
-            </button>
-            <button className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 border border-blue-600 rounded-xl text-xs text-white shadow-sm">
-              <Network className="w-3.5 h-3.5" />AI分析
             </button>
             <button className="p-2 bg-white border border-gray-200 rounded-xl text-gray-400 hover:text-gray-600 shadow-sm">
               <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* 节点详情浮窗 */}
+          {selectedNode && (
+            <NodeDetail node={selectedNode} onClose={() => setSelectedNode(null)} />
+          )}
 
           {/* 图例 */}
           <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur-sm rounded-xl border border-gray-100 p-3 shadow-sm">
@@ -285,9 +413,12 @@ export default function GraphPage() {
             </div>
           )}
 
-          {/* D3 图谱 */}
+          {/* 图谱渲染（力导向 / 树状图切换）*/}
           <div className="w-full h-full">
-            <ForceGraph />
+            {graphMode === 'force'
+              ? <ForceGraph onNodeClick={handleNodeClick} />
+              : <TreeView onNodeClick={handleNodeClick} />
+            }
           </div>
         </div>
 
