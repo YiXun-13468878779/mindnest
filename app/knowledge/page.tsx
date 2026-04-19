@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useDropzone } from 'react-dropzone'
 import Link from 'next/link'
@@ -431,7 +431,7 @@ const TABS = [
   { key: 'flash', label: '闪念笔记', icon: Zap },
 ] as const
 
-export default function KnowledgePage() {
+function KnowledgePageInner() {
   const searchParams = useSearchParams()
   const initTab = (searchParams.get('tab') as typeof TABS[number]['key']) || 'docs'
   const { documents, folders, selectedFolderId, setSelectedFolderId } = useMindNestStore()
@@ -560,5 +560,13 @@ export default function KnowledgePage() {
         </div>
       </div>
     </AppLayout>
+  )
+}
+
+export default function KnowledgePage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-gray-400">加载中...</div>}>
+      <KnowledgePageInner />
+    </Suspense>
   )
 }
