@@ -1,13 +1,85 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import Link from 'next/link'
 import AppLayout from '@/components/layout/AppLayout'
 import { useMindNestStore } from '@/lib/store'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, PieChart, Pie, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis,
 } from 'recharts'
-import { TrendingUp, TrendingDown, Calendar, Plus, FileText, Flame, BookOpen, Zap, ArrowRight, Minus } from 'lucide-react'
+import { TrendingUp, TrendingDown, Calendar, Plus, FileText, Flame, BookOpen, Zap, ArrowRight, Minus, Brain, Loader2, RefreshCw, RotateCcw } from 'lucide-react'
+
+// ─── AI 知识洞察 ─────────────────────────────────────────────
+function AIInsightsCard() {
+  const { documents } = useMindNestStore()
+  const [text, setText] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(false)
+
+  const generate = async () => {
+    if (loading || documents.length === 0) return
+    setLoading(true); setText(''); setDone(false)
+    try {
+      const catMap: Record<string, number> = {}
+      documents.forEach(d => { if (d.category) catMap[d.category] = (catMap[d.category] || 0) + 1 })
+      const tagMap: Record<string, number> = {}
+      documents.forEach(d => d.tags?.forEach(t => { tagMap[t] = (tagMap[t] || 0) + 1 }))
+      const topTags = Object.entries(tagMap).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([t]) => t)
+      const recentTitles = documents.slice(0, 8).map(d => d.title)
+
+      const res = await fetch('/api/ai-insights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ total: documents.length, categories: catMap, topTags, recentTitles }) })
+      if (!res.ok || !res.body) throw new Error('AI 请求失败')
+      const reader = res.body.getReader(); const decoder = new TextDecoder(); let full = ''
+      while (true) { const { done: d, value } = await reader.read(); if (d) break; full += decoder.decode(value, { stream: true }); setText(full) }
+      setDone(true)
+    } catch (e: any) {
+      setText(`生成失败：${e.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center">
+            <Brain className="w-4 h-4 text-indigo-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800">AI 知识洞察</h2>
+            <p className="text-xs text-gray-400">基于你的知识库生成个性化分析</p>
+          </div>
+        </div>
+        <button onClick={generate} disabled={loading || documents.length === 0} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          {loading ? '分析中...' : done ? '重新生成' : '生成洞察'}
+        </button>
+      </div>
+
+      {!text && !loading && (
+        <div className="text-center py-6">
+          <Brain className="w-10 h-10 text-indigo-200 mx-auto mb-2" />
+          <p className="text-sm text-gray-400">{documents.length === 0 ? '先添加一些文档，再来获取洞察' : '点击「生成洞察」获取 AI 对你知识库的深度分析'}</p>
+        </div>
+      )}
+
+      {loading && !text && (
+        <div className="flex items-center gap-2 text-sm text-indigo-400 py-4">
+          <Loader2 className="w-4 h-4 animate-spin" />正在分析你的知识库...
+        </div>
+      )}
+
+      {text && (
+        <div className="prose prose-sm max-w-none prose-headings:text-indigo-800 prose-p:text-gray-700">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── 数据 ─────────────────────────────────────────────────────
 function getDayKey(date: Date) { return date.toISOString().slice(0, 10) }
@@ -274,14 +346,16 @@ export default function InsightsPage() {
     <AppLayout>
       {/* TopBar */}
       <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
-        <input placeholder="搜索知识库..." className="w-80 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm text-gray-600 placeholder-gray-400 focus:outline-none focus:border-blue-300" />
-        <Link href="/document/new" className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors">
+        <h1 className="text-base font-bold text-gray-900">学习洞察</h1>
+        <Link href="/knowledge" className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors">
           <Plus className="w-4 h-4" />新建文档
         </Link>
       </div>
 
       <div className="min-h-screen bg-gray-50/60">
         <div className="p-6 max-w-6xl space-y-5">
+          {/* AI 洞察卡（置顶） */}
+          <AIInsightsCard />
 
           {/* 页头 */}
           <div className="flex items-center justify-between">

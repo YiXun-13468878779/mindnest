@@ -25,6 +25,8 @@ export interface Document {
   video_id?: string        // 视频平台 ID（用于嵌入播放）
   raw_text?: string        // 抓取的原始文本
   ai_analysis?: string     // AI 整理结果
+  enrichment?: string      // AI 深度研究结果
+  enrichment_status?: 'pending' | 'running' | 'done' | 'error'
   created_at: string
   updated_at: string
   word_count?: number
